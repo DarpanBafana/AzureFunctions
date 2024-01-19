@@ -2,9 +2,9 @@
 1. Won't allow duplicate addresses in To,Cc, Bcc - unique email address in the personalizations array
 2. These 7 fields are mandatory either you pass null or blank array/string
 {
-	"sender_address" : "sender@vizientinc.com",
+	"sender_address" : "sender@mailprovider.com",
 	"email_subject" : "Enter Subject",
-	"recipient_address" : "receiver@vizientinc.com",
+	"recipient_address" : "receiver@mailprovider.com",
 	"email_content" : "Enter Content",
 	"cc_recipient_address" : null,
 	"html_content": null,
