@@ -1,0 +1,6 @@
+{
+    "container_name":"client-adls-data",
+    "directory_name":"/SSIS_To_ADF/manual_calc_sheet/",
+    "csv_file_name":"MCS_FileStatus.csv",
+    "excel_file_name":"MCS_FileStatus.xlsx"
+}

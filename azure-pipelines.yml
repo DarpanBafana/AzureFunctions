@@ -1,0 +1,176 @@
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: Shared/PipelineTemplates
+
+      
+trigger:
+  batch: true
+  branches:
+    include:
+      - main
+      - CI-CDSetup
+  paths:
+    exclude:
+      - azure-pipelines.yml
+      - .git
+      - .gitignore
+      - .funcignore
+      - README.md
+      - proxies.json
+      - templates/*
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  majorVersion: 1
+  minorVersion: 1
+  patchVersion: $[counter(format('{0}.{1}', variables['majorVersion'], variables['minorVersion']), 1)]
+  azureSubscription_Dev: 'azure-application-deploy-dev01'
+  azureSubscription_Test: 'azure-application-deploy-test'
+  # azureSubscription_Stage: 'azure-application-deploy-stage'
+  # azureSubscription_Prod: 'azure-application-deploy-prod'
+
+
+stages:
+- template: core/stage-ado-setVersionNumber.yml@templates
+- stage: Build 
+  displayName: "Build"
+  variables:
+    - group: client-dev
+  jobs:
+  - job:
+    workspace:
+      clean: outputs
+    steps:    
+      - bash: |
+          if [ -f extensions.csproj ]
+          then
+              dotnet build extensions.csproj --output ./bin
+          fi
+        workingDirectory: $(System.DefaultWorkingDirectory)
+        displayName: 'Build extensions'
+
+       # Setting python version to the specific version as required by the function app.  
+      - task: UsePythonVersion@0
+        displayName: 'Set Python Version'
+        inputs:
+          versionSpec: '3.8'
+          architecture: 'x64'
+      
+      # pip install all dependencies as mentioned in the requirements.txt in your app repo 
+      - bash: |
+          pip install --target="./.python_packages/lib/site-packages" -r ./requirements.txt
+          pip install -r ./requirements.txt
+          pip install pytest pytest-azurepipelines
+          pip install pytest-cov
+        workingDirectory: $(System.DefaultWorkingDirectory)
+        displayName: 'Install Python Dependencies'
+
+      
+      # Task to publish test results to ADO
+      - task: PublishTestResults@2
+        condition: succeededOrFailed()
+        inputs:
+          testResultsFormat: 'JUnit'
+          testResultsFiles: '**/test-results.xml'
+          failTaskOnFailedTests: true
+
+      - task: PublishCodeCoverageResults@1
+        inputs:
+          codeCoverageTool: Cobertura
+          summaryFileLocation: '$(System.DefaultWorkingDirectory)/**/coverage.xml'
+
+      # Copy the files with certain file exclusions.
+      - task: CopyFiles@2
+        displayName: 'Copy Files to: $(Build.ArtifactStagingDirectory)'
+        inputs:
+          SourceFolder: '$(System.DefaultWorkingDirectory)'
+          Contents: |
+            **/*
+            !*.md
+            !*.yml
+            !.git/**/*
+            !.gitignore
+            !.funcignore
+            !proxies.json
+            !templates/**/*
+            !tests/**/*
+          TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+      # Zip the function app code 
+      - task: ArchiveFiles@2
+        displayName: "Archive files"
+        inputs:
+          rootFolderOrFile: "$(Build.ArtifactStagingDirectory)"
+          includeRootFolder: false
+          archiveFile: "$(Build.ArtifactStagingDirectory)/build$(Build.BuildId).zip"
+          replaceExistingArchive: true
+
+      # Publish the zip from task above to Artifact location
+      - task: PublishBuildArtifacts@1
+        inputs:
+          PathtoPublish: '$(Build.ArtifactStagingDirectory)/build$(Build.BuildId).zip'
+          artifactName: '$(Build.DefinitionName)'
+
+- stage: DeployDev
+  pool: linux
+  variables:
+    - group: client-dev
+  condition: succeeded()
+  dependsOn: Build
+  displayName: 'Deploy to Dev'
+  # steps to download and deploy are present in the below templates file in templates/ folder 
+  jobs:
+    - template: 'templates/client-python-azFunapp-deploy-template.yml'
+      parameters:
+        environmentName: 'Dev'
+        adoEnvironment: Dev
+        azureSubscription: $(azureSubscription_Dev)
+
+- stage: DeployTest
+  pool: linux
+  variables:
+    - group: client-test
+  condition: succeeded()
+  dependsOn: DeployDev
+  displayName: 'Deploy to Test'
+  # steps to download and deploy are present in the below templates file in templates/ folder 
+  jobs:
+    - template: 'templates/client-python-azFunapp-deploy-template.yml'
+      parameters:
+        environmentName: 'Test'
+        adoEnvironment: Test
+        azureSubscription: $(azureSubscription_Test)
+
+# - stage: DeployStage
+#   pool: linux
+#   variables:
+#     - group: client-stage
+#   condition: succeeded()
+#   dependsOn: DeployTest
+#   displayName: 'Deploy to Stage'
+#   # steps to download and deploy are present in the below templates file in templates/ folder 
+#   jobs:
+#     - template: 'templates/client-python-azFunapp-deploy-template.yml'
+#       parameters:
+#         environmentName: 'Stage'
+#         adoEnvironment: Stage
+#         azureSubscription: $(azureSubscription_Stage)
+
+# - stage: DeployProd
+#   pool: linux
+#   variables:
+#     - group: client-prod
+#   condition: succeeded()
+#   dependsOn: DeployStage
+#   displayName: 'Deploy to Prod'
+#   # steps to download and deploy are present in the below templates file in templates/ folder 
+#   jobs:
+#     - template: 'templates/client-python-azFunapp-deploy-template.yml'
+#       parameters:
+#         environmentName: 'Prod'
+#         adoEnvironment: Prod
+#         azureSubscription: $(azureSubscription_Prod)
